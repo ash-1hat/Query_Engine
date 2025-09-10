@@ -807,17 +807,43 @@ async def parse_json_string(request: JsonStringRequest) -> dict:
         # The content is a JSON string that needs to be parsed
         print(f"[API DEBUG] parse_json_string: Received JSON string: {type(request.json_string)}")
         json_str = request.json_string.strip()
+        sample_json = None
         
         # Parse the JSON string - it's a string containing escaped JSON
         if json_str.startswith('"') and json_str.endswith('"'):
             print(f"[API DEBUG] parse_json_string: JSON string starts and ends with quotes")
             # This is a JSON string containing escaped JSON
             # First, parse the outer JSON string
-            json_content = json.loads(json_str)
-            print(f"JSON content: {json_content}")
-            # Then parse the inner JSON content
-            sample_json = json.loads(json_content)
-            print(f"Sample JSON: {sample_json}")
+            try:
+                json_content = json.loads(json_str)
+                print(f"JSON content: {json_content}")
+                
+                # Check if the content is still a string with escaped characters
+                if isinstance(json_content, str):
+                    # Try to parse the inner JSON content
+                    try:
+                        # Remove any remaining escape characters
+                        unescaped_content = json_content.replace('\\"', '"').replace('\\\\', '\\')
+                        sample_json = json.loads(unescaped_content)
+                        print(f"Sample JSON after unescaping: {sample_json}")
+                    except json.JSONDecodeError as inner_error:
+                        print(f"[API DEBUG] parse_json_string: Error parsing inner JSON after unescaping: {str(inner_error)}")
+                        try:
+                            # Try direct parsing without unescaping
+                            sample_json = json.loads(json_content)
+                            print(f"Sample JSON from direct parsing: {sample_json}")
+                        except json.JSONDecodeError as direct_error:
+                            print(f"[API DEBUG] parse_json_string: Error with direct parsing: {str(direct_error)}")
+                            # Use the string content directly as a last resort
+                            sample_json = json_content
+                            print(f"Using JSON content directly: {sample_json}")
+                else:
+                    # If json_content is already a dict or other non-string type, use it directly
+                    sample_json = json_content
+                    print(f"Using parsed JSON directly: {type(sample_json)}")
+            except json.JSONDecodeError as outer_error:
+                print(f"[API DEBUG] parse_json_string: Error parsing outer JSON: {str(outer_error)}")
+                raise
         else:
             # Try to parse as a regular JSON object
             print(f"[API DEBUG] parse_json_string: JSON string does not start and end with quotes")
@@ -852,11 +878,42 @@ async def parse_json_string(request: JsonStringRequest) -> dict:
                 else:
                     sample_json = {}
                         
-        if sample_json:
-            print("Loaded JSON data successfully")
-            return {"data": sample_json, "message": "JSON parsed successfully"}
+        # Validate that we have a proper JSON object (dict) before reporting success
+        if sample_json is not None:
+            # Check if it's a string with escaped characters (not fully parsed)
+            if isinstance(sample_json, str) and ('\\"' in sample_json or '\\\\' in sample_json):
+                print("[API DEBUG] parse_json_string: Warning - JSON still contains escape characters")
+                try:
+                    # Try one more time to parse with json.loads
+                    test_json = json.loads(sample_json.replace('\\"', '"').replace('\\\\', '\\'))
+                    print(f"[API DEBUG] parse_json_string: Successfully parsed after additional unescaping")
+                    sample_json = test_json
+                except json.JSONDecodeError:
+                    print("[API DEBUG] parse_json_string: Could not fully parse JSON, but using best available result")
+            
+            # Final validation - check if we have a proper dictionary
+            if isinstance(sample_json, dict):
+                print("[API DEBUG] parse_json_string: Successfully loaded valid JSON dictionary")
+                return {"data": sample_json, "message": "JSON parsed successfully"}
+            else:
+                print(f"[API DEBUG] parse_json_string: Result is not a dictionary, type: {type(sample_json)}")
+                # Try to convert string to dict if possible
+                if isinstance(sample_json, str):
+                    try:
+                        # Last attempt to convert string to dict using ast.literal_eval
+                        import ast
+                        dict_result = ast.literal_eval(sample_json)
+                        if isinstance(dict_result, dict):
+                            print("[API DEBUG] parse_json_string: Successfully converted string to dictionary")
+                            return {"data": dict_result, "message": "JSON parsed successfully after conversion"}
+                    except (SyntaxError, ValueError):
+                        pass
+                
+                # If we got here, we couldn't get a proper dictionary
+                print("[API DEBUG] parse_json_string: Warning - returning non-dictionary result")
+                return {"data": sample_json, "message": "JSON parsed but not as a dictionary"}
         else:
-            print("Failed to parse JSON data")
+            print("[API DEBUG] parse_json_string: Failed to parse JSON data")
             return {"data": None, "message": "Failed to parse JSON"}
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
