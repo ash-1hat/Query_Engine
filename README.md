@@ -1,4 +1,4 @@
-# AI Clone
+# Query Engine
 
 An AI-powered expert system that leverages OpenAI's vectorStores API and GPT-4o to provide domain-specific knowledge and expertise.
 
