@@ -14,7 +14,7 @@ from openai import OpenAI
 from io import BytesIO
 from llama_cloud_services import LlamaParse
 from youtube_transcript_api import YouTubeTranscriptApi
-from config import OPENAI_API_KEY, LLAMAPARSE_API_KEY, DOMAIN_FILE_PATH
+from config import OPENAI_API_KEY, LLAMA_CLOUD_API_KEY, DOMAIN_FILE_PATH
 from database import supabase
 from models import CreateVector
 from fastapi import HTTPException
@@ -54,7 +54,7 @@ def get_openai_client():
 
 # Initialize LlamaParse client
 llama_parser = LlamaParse(
-    api_key=LLAMAPARSE_API_KEY,  # can also be set in your env as LLAMA_CLOUD_API_KEY
+    api_key=LLAMA_CLOUD_API_KEY,  # can also be set in your env as LLAMA_CLOUD_API_KEY
     num_workers=4,       # if multiple files passed, split in `num_workers` API calls
     verbose=True,
     language="en"       # optionally define a language, default=en
@@ -1104,6 +1104,54 @@ async def get_file_ids(vectorname: Optional[str] = None, vector_id: Optional[str
         print(f"Error getting documents: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+async def delete_file_for_vector_store(vector_id: str):
+    """
+    Delete file_ids filtered by vector_id and owner_id 
+    """
+    try:
+        # Get the file_ids from the vector_stores table
+        response = supabase.table("vector_stores").select("file_ids").eq("vector_id", vector_id).execute()
+        
+        # Check if we have data and file_ids
+        if not response.data or not response.data[0].get("file_ids"):
+            print(f"[Delete file ids]: No file IDs found for vector store {vector_id}")
+            return True
+        
+        # Extract the actual file IDs from the response
+        file_ids_list = response.data[0].get("file_ids", [])
+        print(f"[Delete file ids]: Found {len(file_ids_list)} file IDs for vector store {vector_id}")
+        
+        # Delete each file ID
+        for file_id in file_ids_list:
+            if not file_id or not isinstance(file_id, str):
+                print(f"[Delete file ids]: Skipping invalid file ID: {file_id}")
+                continue
+                
+            try:
+                print(f"[Delete file ids]: Deleting file {file_id} from vector store {vector_id}")
+                # Delete from vector store
+                client.vector_stores.files.delete(
+                    vector_store_id=vector_id,
+                    file_id=file_id
+                )
+                print(f"[Delete file ids]: Successfully deleted file {file_id} from vector store")
+                
+                # Delete from OpenAI files
+                client.files.delete(file_id)
+                print(f"[Delete file ids]: Successfully deleted file {file_id} from OpenAI")
+                
+                # Delete from documents table
+                delete_result = supabase.table("documents").delete().eq("openai_file_id", file_id).execute()
+                print(f"[Delete file ids]: Deleted {file_id} from documents table")
+            except Exception as delete_error:
+                print(f"[Delete file ids]: Error deleting file {file_id}: {str(delete_error)}")
+                # Continue with other files even if one fails
+    except Exception as e:
+        print(f"[Delete file ids]: Error retrieving file IDs: {str(e)}")
+    
+    return True
+
+
 async def delete_file_ids(vector_id: str, file_ids: List[str], owner_id: str):
     """
     Delete file_ids filtered by vector_id and owner_id 
@@ -1346,6 +1394,8 @@ async def delete_vector_index(vector_id: str) -> bool:
         print(f"[DEBUG] delete_vector_index: Attempting to delete vector store with ID: {vector_id}")
         
         # Delete the vector store using the client
+        print(f"[DEBUG] delete_vector_index: Deleting vector store with ID: {vector_id}")
+        await delete_file_for_vector_store(vector_id)
         client.vector_stores.delete(vector_id)
         print(f"[DEBUG] delete_vector_index: Successfully deleted vector store with ID: {vector_id}")
         return True
@@ -1739,7 +1789,7 @@ async def get_assistant_response(thread_id: str, run_id: str):
         run_id: ID of the run
         
     Returns:
-        Assistant's response text
+        Assistant's response text with source citations removed
     """
     try:
         print(f"[DEBUG] get_assistant_response: Getting response from run {run_id}")
@@ -1762,10 +1812,16 @@ async def get_assistant_response(thread_id: str, run_id: str):
             if content_item.type == "text":
                 response_text += content_item.text.value
         
-        return response_text
+        # Remove source citations like 【4:6†source】 using regex
+        import re
+        cleaned_response = re.sub(r'【\d+:\d+†source】', '', response_text)
+        
+        print(f"[DEBUG] get_assistant_response: Removed source citations from response")
+        return cleaned_response
     except Exception as e:
         print(f"[ERROR] get_assistant_response: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting assistant response: {str(e)}")
+
 
 async def query_expert_with_assistant(org_id: UUID, expert_id: UUID, expert_name: str, domain_name: str, client_id: UUID, query: str, memory_type: str = "expert", thread_id: str = None):
     """

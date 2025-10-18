@@ -458,6 +458,7 @@ async def initialize_client_memory(request: InitializeMyClientMemoryRequest):
         expert_client_request = FilesConfigRequest(
             memory_type='myclient',
             vector_id=expert_client_vector_id,
+            expert_id=request.expert_id,
             client_id=expert_client_id,
             other_doc=expert_client_doc,
             org_client_id=request.org_client_id,
@@ -1395,7 +1396,7 @@ async def add_files_to_vector(request: FilesConfigRequest):
         elif memory_type == 'organization' or memory_type == 'llm':
             owner_id = str(request.org_id)
         elif memory_type == 'myclient':
-            owner_id = str(request.expert_id) + "_" + str(request.client_id)
+            owner_id = str(request.client_id) + "_" + str(request.expert_id)
         
         if owner_id is None:
             raise HTTPException(status_code=400, detail="Invalid arguments for memory type")
@@ -1831,6 +1832,7 @@ async def get_documents_by_file_ids(file_ids: Optional[List[str]] = None):
         print(f"Error getting documents: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 async def get_org_id(org_name: str):
     """
     Get organization ID by name
@@ -2067,6 +2069,18 @@ async def get_available_domains(expert_id: UUID, org_id: UUID):
         print(f"Error getting available domains: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/vectors/ids", response_model=dict)
+async def get_vectorids(org_name: str):
+    try:
+        print(f"Getting vector IDs for organization: {org_name}")
+        org_id = await get_org_id(org_name)
+        result = supabase.table("vector_stores").select("vector_id").eq("org_id", org_id).execute()
+        print(f"Found {len(result.data)} vector IDs")
+        return result.data
+    except Exception as e:
+        print(f"Error getting vector IDs: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Get vector ID based on domain, expert, and client parameters
 @router.get("/vectors/id", response_model=dict)
 async def get_vector_id(request: CreateVector):
@@ -2201,6 +2215,24 @@ async def get_expert_context(expert_id: UUID):
         return {"context": result.data[0]["context"]}
     except Exception as e:
         print(f"Error getting expert context: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Delete vector memory
+@router.delete("/vectors/memory-org", response_model=bool)
+async def delete_org_vector_memory(org_name: str):
+    """
+    Delete vector memory for an organization
+    """
+    try:
+        print(f"Deleting vector memory for organization: {org_name}")
+        result = await get_vectorids(org_name)
+        for item in result:
+            vector_id = item["vector_id"]
+            await delete_vector_index(vector_id)
+            result = supabase.table("vector_stores").delete().eq("vector_id", vector_id).execute()
+        return True
+    except Exception as e:
+        print(f"Error deleting vector memory: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Delete vector memory

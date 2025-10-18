@@ -14,4 +14,4 @@ DOMAIN_FILE_PATH = os.getenv("DOMAIN_FILE_PATH")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # LlamaParse configuration
-LLAMAPARSE_API_KEY = os.getenv("LLAMAPARSE_API_KEY")
+LLAMA_CLOUD_API_KEY = os.getenv("LLAMA_CLOUD_API_KEY")

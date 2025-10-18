@@ -211,7 +211,7 @@ st.sidebar.markdown("<h2 style='color: white; margin: 0; font-size: 1.5rem; text
 
 page = st.sidebar.radio(
     "Select a page:",
-    ["Create Organization", "Assistant"]
+    ["Create 1hat patient", "Assistant", "Update", "Delete Vector"]
 )
 
 def get_domains(org_id):
@@ -725,13 +725,133 @@ elif page == "Create Organization":
             submission_key = f"{org_name}"
             if "last_org_submission" not in st.session_state or st.session_state["last_org_submission"] != submission_key:
                 
-                with st.spinner("Creating organization..."):
-                    try:
-                        # Step 1: Create organization with memory
-                        org_result, org_status = create_org_memory(
-                            org_name=org_name,
-                            document_urls=org_doc_pairs,
-                            pdf_documents=org_pdf_documents
+        # Handle form submission
+        if submitted:
+            has_updates = len(formatted_qa_pairs) > 0 or len(doc_pairs) > 0 or len(pdf_documents) > 0
+            
+            if has_updates:
+                # Call the combined API endpoint
+                result, status_code = update_memory(
+                    memory_type=memory_type,
+                    org_id=org_id,
+                    expert_id=expert_id,
+                    client_id=client_id,
+                    expert_name=selected_expert if selected_expert and selected_expert != "--Select an expert--" else "",
+                    domain_name=domain_name if isinstance(domain_name, str) else (domain_name[0] if isinstance(domain_name, list) and domain_name else ""),
+                    qa_pairs=formatted_qa_pairs if formatted_qa_pairs else None,
+                    document_urls=doc_pairs if doc_pairs else None,
+                    pdf_documents=pdf_documents if pdf_documents else None
+                )
+                
+                if status_code == 200:
+                    memory_name = selected_name if selected_name != "Unknown" else memory_type
+                    st.success(f"{memory_type.capitalize()} {memory_name} updated successfully!")
+                    
+                    # Show update details
+                    with st.expander("Update Details"):
+                        st.write(f"**Status:** {result.get('status', 'Unknown')}")
+                        st.write(f"**Message:** {result.get('message', 'No message provided')}")
+                        
+                        # If context was updated, refresh it
+                        if len(formatted_qa_pairs) > 0:
+                            current_context = get_expert_context(selected_expert_id)
+                            with update_tabs[0]:
+                                with current_context_container:
+                                    st.subheader("Current Context (Updated)")
+                                    st.text_area("Current Context", value=current_context.get("context"), height=150, disabled=True, key="updated_context")
+                else:
+                    st.error(f"Error updating expert: {result.get('error', 'Unknown error')}")
+            else:
+                st.warning("No updates provided. Please add context questions, URL documents, or PDF documents.")
+        
+        # Handle adding more document inputs
+        if add_more_url:
+            st.session_state.expert_update_doc_inputs = st.session_state.get('expert_update_doc_inputs', 3) + 1
+            st.experimental_rerun()
+        if add_more_pdf:
+            st.session_state.expert_update_pdf_uploads = st.session_state.get('expert_update_pdf_uploads', 3) + 1
+            st.experimental_rerun()
+    else:
+        st.info("Please select an expert to update.")
+
+elif page == "Create 1hat patient":
+    st.title("Create 1hat patient")
+    st.write("Create a new client with JSON data or update an existing client.")
+    
+    # Initialize session state variables if needed
+    if "clear_client_form" in st.session_state and st.session_state["clear_client_form"]:
+        # Reset the form by removing the flag
+        st.session_state["clear_client_form"] = False
+        # We don't need to clear the inputs here as they'll be reset on rerun
+    
+    # Get organizations first
+    
+    
+    selected_org = st.text_input("Hospital Name", key="hospital_name_input")
+    domain_name = st.text_input ("Domain", key="domain_key")
+    selected_expert = st.text_input("Expert", key="expert_key")
+    client_name = st.text_input("Client Name", key="client_name_key")
+    org_client_id = st.number_input("Organization Client ID", key="org_client_id_input")
+    consultation_id = st.text_input("Consultation ID", key="consultation_id_input")
+    # Use datetime_input with both date and time for timestamptz compatibility
+    created_date = st.date_input("Created Date", key="created_date_input")
+    created_time_input = st.time_input("Created Time", key="created_time_input")
+    
+    # Combine date and time into a datetime object with timezone info for Supabase timestamptz
+    import datetime
+    created_time = datetime.datetime.combine(created_date, created_time_input)
+    # Format as ISO 8601 string with timezone info for Supabase timestamptz compatibility
+    created_time_iso = str(created_time.isoformat())
+    # Initialize document pairs dictionary
+    doc_pairs = {}
+    
+    # Initialize PDF documents dictionary
+    pdf_documents = {}
+    other_doc = {}
+
+    if selected_org and domain_name and selected_expert and client_name and org_client_id and consultation_id and created_time_iso:
+        # Find the organization by name to get its ID
+        
+        # Get experts for the selected organization
+            # Generate random org_client_id internally (not visible in UI)
+            st.subheader("Client Data (JSON)")
+            json_str = st.text_area(
+               "Edit JSON data",
+                key="client_json_input"
+            )
+            # Option to load sample JSON
+         
+            client_data = json_str
+            
+        
+            with st.form("client_create_form"):
+                # Submit buttons for the form
+                submit_button = st.form_submit_button("Create/Update Client")
+            
+            if submit_button:
+                if not client_name:
+                    st.error("Please enter a client name")
+                elif not client_data:
+                    st.error("Please enter JSON data")
+                else:
+                    # Check if we've already processed this submission
+                    submission_key = f"{client_name}_{hash(client_data)}"
+                    if "last_client_submission" not in st.session_state or st.session_state["last_client_submission"] != submission_key:
+                        # Create other_doc with client data using the filename as the key
+                        
+                        # Call API to create/update client
+                        result, status_code = create_client(
+                            selected_org, 
+                            domain_name,
+                            selected_expert, 
+                            client_name, 
+                            client_data, 
+                            org_client_id, 
+                            doc_pairs, 
+                            pdf_documents, 
+                            other_doc,
+                            consultation_id,
+                            created_time_iso
                         )
                         
                         if org_status == 200:
@@ -750,10 +870,48 @@ elif page == "Create Organization":
                                 st.session_state["last_org_submission"] = submission_key
                                 st.session_state["clear_org_form"] = True
                         else:
-                            st.error(f"Error creating organization: {org_result.get('error', 'Unknown error')}")
-                    
-                    except Exception as e:
-                        st.error(f"Error during creation process: {str(e)}")
+                            st.error(f"Error creating/updating client: {result.get('error', 'Unknown error')}")
+                    else:
+                        st.info("Form already submitted. Refresh the page to submit again.")
+                        # Clear the submission tracking after showing the message
+                        del st.session_state["last_client_submission"]
+
+elif page == "Delete Vector":
+    st.title("Delete Vector Memory")
+    st.write("Delete all vector memories for an organization. This action cannot be undone.")
+    
+    # Get all organizations
+    try:
+        response = requests.get(f"{API_BASE_URL}/api/organization")
+        if response.status_code == 200:
+            organizations = response.json()
+            org_options = ["--Select an organization--"] + [org["org_name"] for org in organizations]
+            
+            # Organization selection
+            selected_org = st.selectbox("Select Organization", org_options)
+            
+            if selected_org != "--Select an organization--":
+                # Add a confirmation checkbox
+                confirm_delete = st.checkbox("I understand this will permanently delete ALL vector memories for this organization")
+                
+                # Delete button with confirmation
+                if st.button("Delete Vector Memories", disabled=not confirm_delete):
+                    if confirm_delete:
+                        try:
+                            # Call the delete_org_vector_memory endpoint
+                            response = requests.delete(f"{API_BASE_URL}/api/vectors/memory-org", params={"org_name": selected_org})
+                            
+                            if response.status_code == 200:
+                                st.success(f"Successfully deleted all vector memories for {selected_org}")
+                            else:
+                                st.error(f"Failed to delete vector memories: {response.text}")
+                        except Exception as e:
+                            st.error(f"Error deleting vector memories: {str(e)}")
+                    else:
+                        st.warning("Please confirm deletion by checking the confirmation box")
             else:
-                st.info("Form already submitted. Refresh the page to submit again.")
-                del st.session_state["last_org_submission"]
+                st.info("Please select an organization to delete its vector memories")
+        else:
+            st.error(f"Error fetching organizations: {response.text}")
+    except Exception as e:
+        st.error(f"Error: {str(e)}")
